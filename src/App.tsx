@@ -1,31 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
-import ReactXnft, {
-  Button,
-  Text,
-  TextField,
-  usePublicKey,
-  View,
-  useConnection,
-  Loading,
-} from "react-xnft";
-import base58 from "bs58";
+import ReactXnft, { Button, Text, TextField, View, Loading } from "react-xnft";
 import * as styles from "./styles";
 
 import {
-  clusterApiUrl,
-  Connection,
   LAMPORTS_PER_SOL,
   PublicKey,
-  sendAndConfirmTransaction,
-  Keypair,
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
-import useProvider from "./hooks/useProvider";
 import useXnft from "./hooks/useXnft";
 import SuccessModal from "./components/successModal";
 import ConfirmationModal from "./components/confirmationModal";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { Metaplex } from "@metaplex-foundation/js";
+import { web3 } from "@project-serum/anchor";
+import * as metaplexMetaData from "@metaplex-foundation/mpl-token-metadata";
 
 //
 // On connection to the host environment, warm the cache.
@@ -41,6 +30,7 @@ export function App() {
   const [receiverWallet, setReceiverWallet] = useState("");
   const [solAmount, setSolAmount] = useState(0);
   const [txID, setTxId] = useState("");
+  const [token, setToken] = useState([] as any);
   const [loading, setLoading] = useState(false);
   const [showTxId, setShowTxId] = useState(false);
   const [confirmation, setConfirmation] = useState(false);
@@ -50,17 +40,50 @@ export function App() {
   const fetchBalance = useCallback(async () => {
     if (!xnft.publicKey || !xnft.connection) return;
     const balance = await xnft.connection.getBalance(xnft.publicKey);
+
     setBalance(balance / LAMPORTS_PER_SOL);
-    const tokens = await xnft.connection.getTokenAccountsByOwner(
-      xnft.publicKey,
-      { programId: TOKEN_PROGRAM_ID }
-    );
-    console.log("tokens => ", tokens);
+    const tokens = (
+      await xnft.connection.getParsedTokenAccountsByOwner(xnft.publicKey, {
+        programId: TOKEN_PROGRAM_ID,
+      })
+    ).value.map((data) => data.account.data.parsed.info.mint);
+    setToken(tokens);
   }, [xnft.publicKey, xnft.connection]);
+
+  const fetchNFTs = useCallback(async () => {
+    if (!xnft.connection || !xnft.publicKey || !token.length) return;
+    const music = await Promise.all(
+      token.map(async (mintStr: string) => {
+        const mint = new web3.PublicKey(mintStr);
+
+        const [metadataAddress] = await web3.PublicKey.findProgramAddress(
+          [
+            Buffer.from("metadata", "utf8"),
+            metaplexMetaData.PROGRAM_ID.toBuffer(),
+            mint.toBuffer(),
+          ],
+          metaplexMetaData.PROGRAM_ID
+        );
+
+        try {
+          const metadata = await metaplexMetaData.Metadata.fromAccountAddress(
+            xnft.connection,
+            metadataAddress
+          );
+          return metadata;
+        } catch (e) {
+          console.log("catch", e);
+        }
+      })
+    );
+    // const metaplex = new Metaplex(xnft.connection);
+    // const nft = await metaplex.nfts().findByMint({ mintAddress: token });
+  }, [token.length]);
 
   useEffect(() => {
     fetchBalance();
-  }, [fetchBalance]);
+    fetchNFTs();
+  }, [fetchBalance, fetchNFTs]);
 
   const sendTransaction = async () => {
     if (
@@ -99,6 +122,8 @@ export function App() {
     setShowTxId(true);
   };
 
+  // console.log(token.value && token.value);
+
   return (
     <View style={styles.view}>
       {!showTxId ? (
@@ -111,7 +136,7 @@ export function App() {
                   textAlign: "center",
                 }}
               >
-                {/* Wallet: {provider.publicKey?.toString().slice(0, 7)}...! */}
+                {/* Tokens: {token.length || 0} */}
               </Text>
               <Text
                 style={{
